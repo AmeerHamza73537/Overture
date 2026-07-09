@@ -118,6 +118,47 @@ npm run smoke   # live: real Groq parse + real Hunter search. Spends credits.
 
 ---
 
+## Gmail setup (send outreach from your own Gmail)
+
+The app can send the emails you approve **from your own Gmail account**. That
+requires a (free) Google Cloud OAuth client. One-time setup, ~5 minutes:
+
+1. Go to <https://console.cloud.google.com> and create a project (any name,
+   e.g. "Outreach").
+2. **Enable the Gmail API**: menu → *APIs & Services* → *Library* → search
+   "Gmail API" → *Enable*.
+3. **Consent screen**: *APIs & Services* → *OAuth consent screen* →
+   - User type: **External**, fill in the app name + your email.
+   - You do NOT need Google verification: under **Test users**, add your own
+     Gmail address. Only test users can connect while the app is unverified,
+     which is exactly right for personal use.
+4. **Create the OAuth client**: *APIs & Services* → *Credentials* → *Create
+   credentials* → *OAuth client ID* →
+   - Application type: **Web application**
+   - Authorized redirect URIs: add exactly
+     `http://localhost:3000/api/gmail/callback`
+     (add your deployed URL later, e.g. `https://api.example.com/api/gmail/callback`)
+5. Copy the **Client ID** and **Client secret** into `backend/.env`:
+   `GOOGLE_CLIENT_ID=...` and `GOOGLE_CLIENT_SECRET=...`, then restart the backend.
+6. Run [`supabase/add-gmail-accounts.sql`](supabase/add-gmail-accounts.sql) in
+   the Supabase SQL editor (skip if you ran the current `schema.sql`).
+7. In the app: chat header → mail icon → **Connect Gmail**. In development the
+   consent page must be completed in a browser **on this PC** (the redirect
+   goes to `localhost:3000`). Once the backend is deployed with a public URL,
+   the flow works from the phone browser too.
+
+**What gets stored:** only your email address and the refresh token, encrypted
+with AES-256-GCM using `TOKEN_ENCRYPTION_KEY` from `.env`. Access tokens stay
+in memory and are never logged. The only Gmail permission requested is
+`gmail.send` — the app cannot read your inbox.
+
+**Disconnecting:** the app's disconnect button revokes the grant at Google and
+deletes the stored token. You can also revoke anytime at
+<https://myaccount.google.com/permissions>; the app will then ask you to
+reconnect the next time it tries to send.
+
+---
+
 ## API
 
 ### `POST /api/parse-query`
@@ -221,6 +262,22 @@ page mines `HUNTER_COMPANIES_PER_PAGE` companies for contacts; for
 Recent saved searches (from Supabase). Returns `{ "searches": [] }` when
 Supabase isn't configured. Used by the saved-searches screen later.
 
+### Gmail + outreach endpoints
+
+| Route | What it does |
+| ----- | ------------ |
+| `GET /api/gmail/status` | `{ configured, connected, email }` |
+| `GET /api/gmail/connect` | Browser page: redirects to Google consent |
+| `GET /api/gmail/callback` | Google redirects here; stores encrypted tokens |
+| `DELETE /api/gmail/account` | Revokes the grant and forgets the connection |
+| `POST /api/outreach/generate` | `{ leads, campaign }` → AI drafts per lead |
+| `POST /api/outreach/revise` | `{ lead, campaign, subject, body, instruction }` → revised draft |
+| `POST /api/outreach/send` | `{ emails }` → sends via Gmail, per-email results |
+
+`campaign` is filled once per batch: `{ purpose, sender_name, sender_company,
+details, tone }` — `details` is free-form custom data (offer, links, pricing,
+notes) that the AI must weave into every draft.
+
 ### `GET /health`
 
 Liveness + configuration snapshot.
@@ -300,9 +357,10 @@ backend/
 └─ src/
    ├─ app.js                 # Express assembly
    ├─ config/env.js          # validated env access
-   ├─ lib/                   # supabase client, cache, history
-   ├─ services/              # groq.js (parse), hunter.js (search)
-   ├─ routes/                # parse-query, search-leads, searches
+   ├─ lib/                   # supabase client, cache, history, gmail account store
+   ├─ services/              # groq (parse), hunter (search), googleAuth (OAuth),
+   │                         #   gmail (send), emailWriter (AI drafts/revisions)
+   ├─ routes/                # parse-query, search-leads, searches, gmail, outreach
    ├─ middleware/            # rate limiter, error handler, async wrapper
-   └─ utils/                 # http (timeout), hashing, filter schema, formatting
+   └─ utils/                 # http (timeout), hashing, filters, formatting, tokenCrypto
 ```

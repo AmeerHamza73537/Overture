@@ -3,3 +3,5 @@ node_modules/
 .env.local
 *.log
 .DS_Store
+# Local fallback storage (contains the encrypted Gmail token in dev)
+.data/

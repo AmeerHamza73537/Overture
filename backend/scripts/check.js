@@ -14,6 +14,8 @@ import {
   toDomainSearchParams,
 } from '../src/utils/filterSchema.js';
 import { formatContact, formatCompany, rankContacts } from '../src/utils/formatLead.js';
+import { encryptToken, decryptToken } from '../src/utils/tokenCrypto.js';
+import { buildRawMessage, isLikelyValidEmail } from '../src/services/gmail.js';
 
 let failures = 0;
 
@@ -125,6 +127,39 @@ await check('rankContacts puts title matches first, keeps the rest', () => {
   assert.equal(ranked.length, 3); // nothing dropped
 });
 
+console.log('gmail helpers:');
+
+await check('encryptToken/decryptToken round-trip; unique ciphertexts', () => {
+  const secret = '1//refresh-token-example-value';
+  const a = encryptToken(secret);
+  const b = encryptToken(secret);
+  assert.notEqual(a, b); // fresh IV per call
+  assert.equal(decryptToken(a), secret);
+  assert.equal(decryptToken(b), secret);
+});
+
+await check('decryptToken rejects tampered ciphertext', () => {
+  const stored = encryptToken('secret');
+  const parts = stored.split(':');
+  parts[3] = Buffer.from('tampered!').toString('base64');
+  assert.throws(() => decryptToken(parts.join(':')));
+});
+
+await check('buildRawMessage produces a valid RFC 2822 payload', () => {
+  const raw = buildRawMessage({ to: 'jane@acme.com', subject: 'Hello 👋', body: 'Hi Jane,\r\nGreat product!' });
+  const decoded = Buffer.from(raw, 'base64url').toString('utf8');
+  assert.ok(decoded.startsWith('To: jane@acme.com\r\n'));
+  assert.ok(decoded.includes('Subject: =?UTF-8?B?')); // non-ASCII subject got encoded
+  assert.ok(decoded.includes('\r\n\r\nHi Jane,')); // blank line before body
+});
+
+await check('isLikelyValidEmail catches broken addresses', () => {
+  assert.equal(isLikelyValidEmail('jane@acme.com'), true);
+  for (const bad of ['', 'not-an-email', 'a@b', 'has space@x.com', null, 'x@y.']) {
+    assert.equal(isLikelyValidEmail(bad), false, `should reject ${bad}`);
+  }
+});
+
 // ---- HTTP surface (no upstream calls) --------------------------------------
 
 console.log('http routes:');
@@ -170,6 +205,47 @@ await check('unknown routes return the 404 envelope', async () => {
   const body = await res.json();
   assert.equal(res.status, 404);
   assert.equal(body.error.code, 'not_found');
+});
+
+await check('GET /api/gmail/status reports configuration state', async () => {
+  const res = await fetch(`${base}/api/gmail/status`);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(typeof body.configured, 'boolean');
+  assert.equal(typeof body.connected, 'boolean');
+});
+
+await check('POST /api/outreach/generate rejects a missing campaign purpose', async () => {
+  const res = await fetch(`${base}/api/outreach/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ leads: [{ id: 'x' }], campaign: {} }),
+  });
+  const body = await res.json();
+  assert.equal(res.status, 400);
+  assert.equal(body.error.code, 'invalid_campaign');
+});
+
+await check('POST /api/outreach/revise rejects a missing instruction', async () => {
+  const res = await fetch(`${base}/api/outreach/revise`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subject: 's', body: 'b', campaign: { purpose: 'p' } }),
+  });
+  const body = await res.json();
+  assert.equal(res.status, 400);
+  assert.equal(body.error.code, 'invalid_instruction');
+});
+
+await check('POST /api/outreach/send rejects an unsendable batch', async () => {
+  const res = await fetch(`${base}/api/outreach/send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ emails: [{ to: 'not-an-email', subject: '', body: '' }] }),
+  });
+  const body = await res.json();
+  assert.equal(res.status, 400);
+  assert.equal(body.error.code, 'nothing_sendable');
 });
 
 server.close();

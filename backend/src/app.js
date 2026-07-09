@@ -11,6 +11,8 @@ import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { parseQueryRouter } from './routes/parseQuery.js';
 import { searchLeadsRouter } from './routes/searchLeads.js';
 import { historyRouter } from './routes/history.js';
+import { gmailRouter } from './routes/gmail.js';
+import { outreachRouter } from './routes/outreach.js';
 
 export function createApp() {
   const app = express();
@@ -36,6 +38,8 @@ export function createApp() {
   app.use('/api', apiRateLimiter, parseQueryRouter);
   app.use('/api', apiRateLimiter, searchLeadsRouter);
   app.use('/api', apiRateLimiter, historyRouter);
+  app.use('/api', apiRateLimiter, gmailRouter);
+  app.use('/api', apiRateLimiter, outreachRouter);
 
   // 404 + error handling (must be last).
   app.use(notFound);

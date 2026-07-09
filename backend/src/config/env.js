@@ -24,8 +24,10 @@ const toInt = (value, fallback) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+const port = toInt(read('PORT', { fallback: '3000' }), 3000);
+
 export const env = {
-  port: toInt(read('PORT', { fallback: '3000' }), 3000),
+  port,
   corsOrigin: read('CORS_ORIGIN', { fallback: '*' }),
 
   groq: {
@@ -47,6 +49,36 @@ export const env = {
     // single request can't burn through the Hunter quota.
     companiesPerPage: toInt(read('HUNTER_COMPANIES_PER_PAGE', { fallback: '5' }), 5),
     emailsPerCompany: toInt(read('HUNTER_EMAILS_PER_COMPANY', { fallback: '10' }), 10),
+  },
+
+  google: {
+    // OAuth client for the Gmail connection. Created in Google Cloud Console —
+    // see backend/README.md ("Gmail setup"). Empty until the user fills them in;
+    // the Gmail routes return a clear "not configured" error in that state.
+    clientId: read('GOOGLE_CLIENT_ID', { fallback: '' }),
+    clientSecret: read('GOOGLE_CLIENT_SECRET', { fallback: '' }),
+    // Where Google redirects the browser after consent. Must EXACTLY match an
+    // "Authorized redirect URI" on the OAuth client. localhost works for dev;
+    // change to your deployed https URL in production.
+    redirectUri: read('GOOGLE_REDIRECT_URI', {
+      fallback: `http://localhost:${port}/api/gmail/callback`,
+    }),
+    get configured() {
+      return Boolean(this.clientId && this.clientSecret);
+    },
+  },
+
+  // 64 hex chars (32 bytes) used to AES-256-GCM encrypt the Gmail refresh
+  // token at rest. Generate with:  node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  tokenEncryptionKey: read('TOKEN_ENCRYPTION_KEY', { fallback: '' }),
+
+  outreach: {
+    // Pause between individual Gmail sends (± jitter) so a batch doesn't look
+    // like spam or trip Gmail's rate limits.
+    sendDelayMs: toInt(read('SEND_DELAY_MS', { fallback: '7000' }), 7000),
+    // Hard cap on emails per /send request; keeps one request from running for
+    // many minutes and bounds the blast radius of a mistake.
+    maxBatchSize: toInt(read('SEND_MAX_BATCH', { fallback: '20' }), 20),
   },
 
   supabase: {

@@ -41,9 +41,23 @@ create index if not exists search_history_created_at_idx
 create index if not exists search_history_user_id_idx
   on public.search_history (user_id);
 
+-- --- Gmail connection --------------------------------------------------------
+-- One row per connected Gmail account. id='default' until app auth exists,
+-- after which id becomes the user id. The refresh token is stored ENCRYPTED
+-- (AES-256-GCM, key in the backend's TOKEN_ENCRYPTION_KEY env var) — this
+-- table never sees the plaintext token.
+create table if not exists public.gmail_accounts (
+  id                       text primary key,
+  email                    text,
+  refresh_token_encrypted  text        not null,
+  connected_at             timestamptz not null default now(),
+  updated_at               timestamptz not null default now()
+);
+
 -- --- Lock down with RLS (service role bypasses this) -----------------------
 alter table public.query_cache    enable row level security;
 alter table public.search_history enable row level security;
+alter table public.gmail_accounts enable row level security;
 
 -- No policies added on purpose: only the service role key (server) can access.
 
