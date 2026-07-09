@@ -12,7 +12,6 @@ import { useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
-  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -23,16 +22,10 @@ import {
 } from 'react-native';
 
 import { Colors, Radius, Spacing } from '@/constants/theme';
-import {
-  ApiError,
-  generateEmails,
-  gmailConnectUrl,
-  gmailStatus,
-  reviseEmail,
-  sendEmails,
-} from '@/lib/api';
+import { ApiError, generateEmails, gmailStatus, reviseEmail, sendEmails } from '@/lib/api';
 import { takeComposeLeads } from '@/lib/composeStore';
 import { confirm as confirmDialog, notify } from '@/lib/dialogs';
+import { startGmailConnect } from '@/lib/gmailConnect';
 import type { Campaign, PersonLead, SendResult } from '@/lib/types';
 
 const TONES = ['friendly', 'professional', 'casual', 'direct'];
@@ -155,7 +148,7 @@ export default function ComposeScreen() {
           'Connect your Gmail account first — emails are sent from your own address.',
           'Connect',
         );
-        if (goConnect) Linking.openURL(gmailConnectUrl());
+        if (goConnect) await startGmailConnect();
       } else {
         notify(
           'Gmail not configured',

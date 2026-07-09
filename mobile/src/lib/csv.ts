@@ -46,14 +46,33 @@ export async function exportLeadsCsv(leads: Lead[]): Promise<void> {
   }
 
   // Native: write to the cache directory, then open the share sheet.
-  const { File, Paths } = await import('expo-file-system');
   const Sharing = await import('expo-sharing');
-
-  const file = new File(Paths.cache, filename);
-  file.create();
-  file.write(csv);
-  await Sharing.shareAsync(file.uri, {
+  if (!(await Sharing.isAvailableAsync())) {
+    throw new Error('Sharing is not available on this device.');
+  }
+  const uri = await writeCsvFile(filename, csv);
+  await Sharing.shareAsync(uri, {
     mimeType: 'text/csv',
     dialogTitle: 'Export leads',
   });
+}
+
+/**
+ * Write the CSV with the current File API, falling back to the legacy
+ * expo-file-system API if the new one fails on this device/runtime.
+ * Returns the file:// URI to hand to the share sheet.
+ */
+async function writeCsvFile(filename: string, csv: string): Promise<string> {
+  try {
+    const { File, Paths } = await import('expo-file-system');
+    const file = new File(Paths.cache, filename);
+    file.create();
+    file.write(csv);
+    return file.uri;
+  } catch {
+    const legacy = await import('expo-file-system/legacy');
+    const uri = `${legacy.cacheDirectory}${filename}`;
+    await legacy.writeAsStringAsync(uri, csv);
+    return uri;
+  }
 }

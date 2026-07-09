@@ -3,10 +3,11 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Colors, Radius, Spacing } from '@/constants/theme';
-import { ApiError, disconnectGmail, gmailConnectUrl, gmailStatus } from '@/lib/api';
+import { ApiError, disconnectGmail, gmailStatus } from '@/lib/api';
+import { startGmailConnect } from '@/lib/gmailConnect';
 import type { GmailStatus } from '@/lib/types';
 
 export default function GmailScreen() {
@@ -27,13 +28,9 @@ export default function GmailScreen() {
     refresh();
   }, [refresh]);
 
-  const connect = () => {
-    // The consent flow happens in a real browser: backend /connect redirects
-    // to Google, Google redirects back to the backend, which stores the
-    // tokens. In dev the redirect goes to localhost:3000, so finish the
-    // consent in a browser ON THE PC running the backend.
-    Linking.openURL(gmailConnectUrl());
-  };
+  // Opens the consent flow, or (phone + local backend) copies the PC link
+  // with instructions — see lib/gmailConnect.ts for why.
+  const connect = () => startGmailConnect();
 
   const disconnect = async () => {
     setWorking(true);

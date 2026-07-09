@@ -8,6 +8,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import { setComposeLeads } from '@/lib/composeStore';
 import { exportLeadsCsv } from '@/lib/csv';
+import { notify } from '@/lib/dialogs';
 import type { Lead, Pagination, PersonLead, SearchType } from '@/lib/types';
 import { LeadCard } from './lead-card';
 
@@ -65,8 +66,9 @@ export function ResultsBubble({ leads, pagination, searchType, loadingMore, onLo
     setExporting(true);
     try {
       await exportLeadsCsv(leads);
-    } catch {
-      // Sharing cancelled or unavailable — nothing to surface.
+    } catch (err) {
+      // Tell the user WHY it failed instead of failing silently.
+      notify('Export failed', err instanceof Error ? err.message : 'Could not create the CSV file.');
     } finally {
       setExporting(false);
     }
