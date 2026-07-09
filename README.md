@@ -1,6 +1,6 @@
-# Outreach
+# Overture
 
-Outreach is a mobile-first lead discovery app that lets users describe the kind of people or companies they want to reach in plain English and receive relevant leads in return. The experience is built around a conversational chat flow, where natural-language requests are interpreted into structured filters and then used to search lead data.
+Overture is a mobile-first lead discovery app that lets users describe the kind of people or companies they want to reach in plain English and receive relevant leads in return. The experience is built around a conversational chat flow, where natural-language requests are interpreted into structured filters and then used to search lead data.
 
 This repository contains two parts:
 
@@ -248,6 +248,6 @@ The backend exposes a simple API that powers the mobile app:
 
 ## Summary
 
-Outreach combines AI, lead-search APIs, and a mobile interface into one workflow: describe who you want to reach, and the app helps you find the right people.
+Overture combines AI, lead-search APIs, and a mobile interface into one workflow: describe who you want to reach, and the app helps you find the right people.
 
 If you are a new contributor, start with the backend for parsing and provider logic, then explore the mobile app for the user experience and screens.
