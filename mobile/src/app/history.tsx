@@ -1,9 +1,10 @@
-// Search history screen: past searches recorded by the backend (Supabase).
-// Tapping an entry re-runs it in the chat.
+// Chats screen: previous conversations, newest first. Tapping one reopens
+// the full conversation in the chat screen (via the chatStore handoff) so the
+// user can read it and continue. Rows can also be deleted.
 
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -15,9 +16,10 @@ import {
 } from 'react-native';
 
 import { Colors, Radius, Spacing } from '@/constants/theme';
-import { ApiError, listSearches } from '@/lib/api';
-import { setPendingQuery } from '@/lib/pendingQuery';
-import type { HistoryEntry } from '@/lib/types';
+import { ApiError, deleteChat, getChat, listChats } from '@/lib/api';
+import { setPendingChat } from '@/lib/chatStore';
+import { confirm as confirmDialog, notify } from '@/lib/dialogs';
+import type { ChatSummary } from '@/lib/types';
 
 function timeAgo(iso: string): string {
   const then = new Date(iso).getTime();
@@ -31,51 +33,72 @@ function timeAgo(iso: string): string {
   return days === 1 ? 'yesterday' : `${days}d ago`;
 }
 
-// Pure fetch (no setState) so it can be shared by the mount effect and
-// pull-to-refresh without tripping react-hooks/set-state-in-effect.
-async function fetchEntries(): Promise<{ entries: HistoryEntry[]; error: string | null }> {
+/** Pure fetch (no setState) shared by the mount effect and pull-to-refresh. */
+async function fetchChats(): Promise<{ chats: ChatSummary[]; error: string | null }> {
   try {
-    return { entries: await listSearches(), error: null };
+    return { chats: await listChats(), error: null };
   } catch (err) {
     return {
-      entries: [],
-      error: err instanceof ApiError ? err.message : 'Could not load history.',
+      chats: [],
+      error: err instanceof ApiError ? err.message : 'Could not load chats.',
     };
   }
 }
 
-export default function HistoryScreen() {
-  const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
+export default function ChatsScreen() {
+  const [chats, setChats] = useState<ChatSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [openingId, setOpeningId] = useState<string | null>(null);
+
+  const apply = useCallback((result: { chats: ChatSummary[]; error: string | null }) => {
+    setChats(result.chats);
+    setError(result.error);
+  }, []);
 
   useEffect(() => {
     let active = true;
-    fetchEntries().then((result) => {
-      if (!active) return;
-      setEntries(result.entries);
-      setError(result.error);
+    fetchChats().then((result) => {
+      if (active) apply(result);
     });
     return () => {
       active = false;
     };
-  }, []);
+  }, [apply]);
 
   const refresh = async () => {
     setRefreshing(true);
-    const result = await fetchEntries();
-    setEntries(result.entries);
-    setError(result.error);
+    apply(await fetchChats());
     setRefreshing(false);
   };
 
-  const rerun = (entry: HistoryEntry) => {
-    setPendingQuery(entry.raw_query);
-    if (router.canGoBack()) router.back();
-    else router.replace('/');
+  // Load the full conversation, hand it to the chat screen, go back to it.
+  const open = async (chat: ChatSummary) => {
+    if (openingId) return;
+    setOpeningId(chat.id);
+    try {
+      setPendingChat(await getChat(chat.id));
+      if (router.canGoBack()) router.back();
+      else router.replace('/');
+    } catch (err) {
+      notify('Could not open chat', err instanceof ApiError ? err.message : 'Please try again.');
+    } finally {
+      setOpeningId(null);
+    }
   };
 
-  if (entries === null) {
+  const remove = async (chat: ChatSummary) => {
+    const ok = await confirmDialog('Delete this chat?', `"${chat.title}" will be removed permanently.`, 'Delete');
+    if (!ok) return;
+    try {
+      await deleteChat(chat.id);
+      setChats((prev) => prev?.filter((c) => c.id !== chat.id) ?? prev);
+    } catch (err) {
+      notify('Delete failed', err instanceof ApiError ? err.message : 'Please try again.');
+    }
+  };
+
+  if (chats === null) {
     return (
       <View style={styles.center}>
         <ActivityIndicator color={Colors.primary} />
@@ -85,36 +108,39 @@ export default function HistoryScreen() {
 
   return (
     <FlatList
-      data={entries}
-      keyExtractor={(e) => String(e.id)}
-      contentContainerStyle={entries.length === 0 ? styles.centerContent : styles.list}
+      data={chats}
+      keyExtractor={(c) => c.id}
+      contentContainerStyle={chats.length === 0 ? styles.centerContent : styles.list}
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={Colors.primary} />
       }
       ListEmptyComponent={
         <View style={styles.empty}>
-          <Ionicons name="time-outline" size={40} color={Colors.textMuted} />
-          <Text style={styles.emptyTitle}>{error ? 'Couldn’t load history' : 'No searches yet'}</Text>
+          <Ionicons name="chatbubbles-outline" size={40} color={Colors.textMuted} />
+          <Text style={styles.emptyTitle}>{error ? 'Couldn’t load chats' : 'No chats yet'}</Text>
           <Text style={styles.emptyText}>
-            {error ?? 'Your past searches will appear here. Run one from the chat to get started.'}
+            {error ?? 'Your conversations are saved automatically. Start one from the chat screen.'}
           </Text>
         </View>
       }
       renderItem={({ item }) => (
         <Pressable
-          onPress={() => rerun(item)}
+          onPress={() => open(item)}
           style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
         >
           <View style={styles.rowBody}>
-            <Text style={styles.query} numberOfLines={2}>
-              {item.raw_query}
+            <Text style={styles.title} numberOfLines={2}>
+              {item.title}
             </Text>
-            <Text style={styles.meta}>
-              {timeAgo(item.created_at)}
-              {typeof item.result_count === 'number' ? ` · ${item.result_count} leads` : ''}
-            </Text>
+            <Text style={styles.meta}>{timeAgo(item.updated_at)}</Text>
           </View>
-          <Ionicons name="refresh-outline" size={18} color={Colors.primary} />
+          {openingId === item.id ? (
+            <ActivityIndicator size="small" color={Colors.primary} />
+          ) : (
+            <Pressable onPress={() => remove(item)} hitSlop={10} accessibilityLabel="Delete chat">
+              <Ionicons name="trash-outline" size={18} color={Colors.textMuted} />
+            </Pressable>
+          )}
         </Pressable>
       )}
     />
@@ -157,7 +183,7 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 4,
   },
-  query: {
+  title: {
     fontSize: 15,
     fontWeight: '500',
     color: Colors.text,

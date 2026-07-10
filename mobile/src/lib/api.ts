@@ -5,14 +5,16 @@
 import { getApiBase } from './config';
 import type {
   Campaign,
+  ChatMessage,
+  ChatSummary,
   DraftEmail,
   GmailStatus,
-  HistoryEntry,
   LeadFilters,
   ParseQueryResponse,
   PersonLead,
   SearchLeadsResponse,
   SendResponse,
+  StoredChat,
 } from './types';
 
 export class ApiError extends Error {
@@ -99,9 +101,27 @@ export function searchLeads(
   });
 }
 
-export async function listSearches(limit = 50): Promise<HistoryEntry[]> {
-  const data = await request<{ searches: HistoryEntry[] }>(`/api/searches?limit=${limit}`);
-  return data.searches ?? [];
+// ---- Chats (conversation history) --------------------------------------------
+
+export async function listChats(limit = 50): Promise<ChatSummary[]> {
+  const data = await request<{ chats: ChatSummary[] }>(`/api/chats?limit=${limit}`);
+  return data.chats ?? [];
+}
+
+export function getChat(id: string): Promise<StoredChat> {
+  return request<StoredChat>(`/api/chats/${id}`);
+}
+
+/** Upsert the whole chat — called after each completed turn. */
+export function saveChat(id: string, title: string, messages: ChatMessage[]): Promise<{ saved: boolean }> {
+  return request(`/api/chats/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ title, messages }),
+  });
+}
+
+export function deleteChat(id: string): Promise<{ deleted: boolean }> {
+  return request(`/api/chats/${id}`, { method: 'DELETE' });
 }
 
 // ---- Gmail + outreach -------------------------------------------------------

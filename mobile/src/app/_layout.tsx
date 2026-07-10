@@ -2,7 +2,7 @@ import { DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Colors } from '@/constants/theme';
 
-const OutreachTheme = {
+const OvertureTheme = {
   ...DefaultTheme,
   colors: {
     ...DefaultTheme.colors,
@@ -16,7 +16,7 @@ const OutreachTheme = {
 
 export default function RootLayout() {
   return (
-    <ThemeProvider value={OutreachTheme}>
+    <ThemeProvider value={OvertureTheme}>
       <StatusBar style="dark" />
       <Stack
         screenOptions={{
@@ -26,8 +26,8 @@ export default function RootLayout() {
           contentStyle: { backgroundColor: Colors.background },
         }}
       >
-        <Stack.Screen name="index" options={{ title: 'Outreach' }} />
-        <Stack.Screen name="history" options={{ title: 'Search history' }} />
+        <Stack.Screen name="index" options={{ title: 'Overture' }} />
+        <Stack.Screen name="history" options={{ title: 'Chats' }} />
         <Stack.Screen name="gmail" options={{ title: 'Gmail account' }} />
         <Stack.Screen name="compose" options={{ title: 'Write outreach' }} />
       </Stack>

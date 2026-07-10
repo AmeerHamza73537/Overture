@@ -32,7 +32,7 @@ export function leadsToCsv(leads: Lead[]): string {
 /** Export leads as a CSV via share sheet (native) or download (web). */
 export async function exportLeadsCsv(leads: Lead[]): Promise<void> {
   const csv = leadsToCsv(leads);
-  const filename = `outreach-leads-${Date.now()}.csv`;
+  const filename = `overture-leads-${Date.now()}.csv`;
 
   if (Platform.OS === 'web') {
     const blob = new Blob([csv], { type: 'text/csv' });

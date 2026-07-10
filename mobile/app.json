@@ -1,17 +1,17 @@
 {
   "expo": {
-    "name": "Outreach",
-    "slug": "outreach",
+    "name": "Overture",
+    "slug": "overture",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "outreach",
+    "scheme": "overture",
     "userInterfaceStyle": "light",
     "android": {
-      "package": "com.devweekend.outreach",
+      "package": "com.devweekend.overture",
       "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#2563EB",
+        "backgroundColor": "#0F6E56",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"

@@ -4,9 +4,10 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, router, useFocusEffect } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -22,9 +23,9 @@ import { LeadActionsSheet } from '@/components/lead-actions-sheet';
 import { ResultsBubble } from '@/components/results-bubble';
 import { TypingDots } from '@/components/typing-dots';
 import { Colors, Radius, Spacing } from '@/constants/theme';
-import { ApiError, parseQuery, searchLeads } from '@/lib/api';
-import { takePendingQuery } from '@/lib/pendingQuery';
-import type { Lead, LeadFilters, Pagination } from '@/lib/types';
+import { ApiError, parseQuery, saveChat, searchLeads } from '@/lib/api';
+import { newChatId, takePendingChat } from '@/lib/chatStore';
+import type { ChatMessage, Lead } from '@/lib/types';
 
 const PER_PAGE = 10;
 
@@ -34,35 +35,36 @@ const SUGGESTIONS = [
   'HR managers at healthcare companies in Canada',
 ];
 
-type ChatMessage =
-  | { id: string; kind: 'user'; text: string }
-  | { id: string; kind: 'bot'; text: string }
-  | { id: string; kind: 'filters'; filters: LeadFilters }
-  | {
-      id: string;
-      kind: 'results';
-      query: string;
-      filters: LeadFilters;
-      leads: Lead[];
-      pagination: Pagination;
-      loadingMore: boolean;
-    }
-  | { id: string; kind: 'typing' }
-  | { id: string; kind: 'error'; text: string; retryQuery: string };
+// Persistent messages (ChatMessage, from types.ts) + the transient typing dots.
+type UiMessage = ChatMessage | { id: string; kind: 'typing' };
 
 let nextId = 0;
 const uid = () => `msg-${++nextId}`;
 
+/** After restoring a chat, continue ids past the stored ones (no key clashes). */
+function bumpUidPast(messages: ChatMessage[]) {
+  for (const m of messages) {
+    const n = Number(m.id?.split('-')[1]);
+    if (Number.isFinite(n) && n >= nextId) nextId = n + 1;
+  }
+}
+
 export default function ChatScreen() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<UiMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [activeLead, setActiveLead] = useState<Lead | null>(null);
-  const listRef = useRef<FlatList<ChatMessage>>(null);
+  const listRef = useRef<FlatList<UiMessage>>(null);
   // Ref-based in-flight guard: state updates are async, so a fast double-tap
   // would pass a `busy` state check twice and fire the search twice.
   const inFlight = useRef(false);
+  // Which stored chat this conversation belongs to. Created lazily on the
+  // first message; replaced when a previous chat is reopened.
+  const chatIdRef = useRef<string | null>(null);
+  // Last payload we successfully saved — skips redundant saves (and prevents
+  // an immediate re-save right after restoring a chat).
+  const lastSavedRef = useRef('');
 
-  const append = (...items: ChatMessage[]) =>
+  const append = (...items: UiMessage[]) =>
     setMessages((prev) => [...prev.filter((m) => m.kind !== 'typing'), ...items]);
 
   const send = useCallback(
@@ -70,6 +72,8 @@ export default function ChatScreen() {
       if (inFlight.current) return;
       inFlight.current = true;
       setBusy(true);
+      // First message of a fresh conversation -> mint the chat's id.
+      if (!chatIdRef.current) chatIdRef.current = newChatId();
       append({ id: uid(), kind: 'user', text: query }, { id: uid(), kind: 'typing' });
 
       try {
@@ -105,7 +109,7 @@ export default function ChatScreen() {
   );
 
   const loadMore = useCallback(async (messageId: string) => {
-    let target: Extract<ChatMessage, { kind: 'results' }> | undefined;
+    let target: Extract<UiMessage, { kind: 'results' }> | undefined;
     setMessages((prev) =>
       prev.map((m) => {
         if (m.id === messageId && m.kind === 'results' && !m.loadingMore) {
@@ -141,20 +145,57 @@ export default function ChatScreen() {
     }
   }, []);
 
-  // A history item was tapped — run it as a fresh chat query.
+  // A previous chat was tapped in the chats screen — restore it here so the
+  // user can read it and continue the conversation where it left off.
   useFocusEffect(
     useCallback(() => {
-      const pending = takePendingQuery();
-      if (pending) send(pending);
-    }, [send]),
+      const pending = takePendingChat();
+      if (!pending) return;
+      const restored = pending.messages ?? [];
+      chatIdRef.current = pending.id;
+      lastSavedRef.current = JSON.stringify(restored); // already saved — don't re-save
+      bumpUidPast(restored);
+      setMessages(restored);
+      setActiveLead(null);
+    }, []),
   );
 
+  // Auto-save: after every completed turn (and load-more), persist the whole
+  // conversation. Debounced, deduplicated, best-effort — a failed save never
+  // interrupts the chat; storage problems surface on the chats screen.
+  useEffect(() => {
+    if (busy) return;
+    const persistable = messages
+      .filter((m): m is ChatMessage => m.kind !== 'typing')
+      .map((m) => (m.kind === 'results' ? { ...m, loadingMore: false } : m));
+    const firstUser = persistable.find((m) => m.kind === 'user');
+    if (!firstUser || !chatIdRef.current) return;
+
+    const payload = JSON.stringify(persistable);
+    if (payload === lastSavedRef.current) return;
+
+    const id = chatIdRef.current;
+    const title = firstUser.text.slice(0, 80);
+    const timer = setTimeout(() => {
+      saveChat(id, title, persistable)
+        .then(() => {
+          lastSavedRef.current = payload;
+        })
+        .catch(() => {
+          /* retried on the next message; chats screen shows storage errors */
+        });
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [messages, busy]);
+
   const clearChat = () => {
+    chatIdRef.current = null;
+    lastSavedRef.current = '';
     setMessages([]);
     setActiveLead(null);
   };
 
-  const renderMessage = ({ item }: { item: ChatMessage }) => {
+  const renderMessage = ({ item }: { item: UiMessage }) => {
     switch (item.kind) {
       case 'user':
         return (
@@ -209,9 +250,9 @@ export default function ChatScreen() {
               <Pressable
                 onPress={() => router.push('/history')}
                 hitSlop={8}
-                accessibilityLabel="Search history"
+                accessibilityLabel="Previous chats"
               >
-                <Ionicons name="time-outline" size={22} color={Colors.primary} />
+                <Ionicons name="chatbubbles-outline" size={22} color={Colors.primary} />
               </Pressable>
               <Pressable
                 onPress={() => router.push('/gmail')}
@@ -232,9 +273,7 @@ export default function ChatScreen() {
       >
         {messages.length === 0 ? (
           <View style={styles.empty}>
-            <View style={styles.emptyBadge}>
-              <Ionicons name="chatbubble-ellipses" size={30} color={Colors.textOnPrimary} />
-            </View>
+            <Image source={require('../../assets/images/logo.png')} style={styles.emptyLogo} />
             <Text style={styles.emptyTitle}>Find your next leads</Text>
             <Text style={styles.emptyText}>
               Describe who you want to reach in plain language — I&apos;ll find matching
@@ -346,13 +385,9 @@ const styles = StyleSheet.create({
     width: '100%',
     alignSelf: 'center',
   },
-  emptyBadge: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
+  emptyLogo: {
+    width: 76,
+    height: 76,
     marginBottom: Spacing.sm,
   },
   emptyTitle: {

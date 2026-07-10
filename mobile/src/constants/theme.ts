@@ -1,25 +1,25 @@
-// Light theme with a blue accent — the single source of truth for colors and
-// spacing so every screen and component stays consistent.
+// Light theme with a teal-and-coral palette — the single source of truth for
+// colors and spacing so every screen and component stays consistent.
 
 export const Colors = {
-  primary: '#2563EB',
-  primaryPressed: '#1D4ED8',
-  primarySoft: '#EFF4FF',
+  primary: '#0F6E56',
+  primaryPressed: '#085041',
+  primarySoft: '#E1F5EE',
 
-  background: '#F4F6FB',
+  background: '#F7FCFA',
   surface: '#FFFFFF',
-  border: '#E3E8F2',
+  border: '#CFE7DE',
 
-  text: '#0F172A',
-  textMuted: '#64748B',
+  text: '#2C2C2A',
+  textMuted: '#5D645F',
   textOnPrimary: '#FFFFFF',
 
-  success: '#16A34A',
-  successSoft: '#EAF7EF',
-  warning: '#B45309',
-  warningSoft: '#FEF3E2',
-  danger: '#DC2626',
-  dangerSoft: '#FDECEC',
+  success: '#0F6E56',
+  successSoft: '#E1F5EE',
+  warning: '#D85A30',
+  warningSoft: '#FCE8E0',
+  danger: '#D85A30',
+  dangerSoft: '#FCE8E0',
 };
 
 export const Spacing = {

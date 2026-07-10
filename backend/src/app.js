@@ -13,6 +13,7 @@ import { searchLeadsRouter } from './routes/searchLeads.js';
 import { historyRouter } from './routes/history.js';
 import { gmailRouter } from './routes/gmail.js';
 import { outreachRouter } from './routes/outreach.js';
+import { chatsRouter } from './routes/chats.js';
 
 export function createApp() {
   const app = express();
@@ -21,8 +22,9 @@ export function createApp() {
   const origins = env.corsOrigin === '*' ? '*' : env.corsOrigin.split(',').map((o) => o.trim());
   app.use(cors({ origin: origins }));
 
-  // Parse JSON bodies (cap size to avoid abuse).
-  app.use(express.json({ limit: '100kb' }));
+  // Parse JSON bodies. 1mb because a saved chat carries its full message
+  // list (lead results included); still small enough to cap abuse.
+  app.use(express.json({ limit: '1mb' }));
 
   // Health check — handy for Railway/Render probes.
   app.get('/health', (req, res) => {
@@ -34,12 +36,18 @@ export function createApp() {
     });
   });
 
-  // API routes (rate-limited).
-  app.use('/api', apiRateLimiter, parseQueryRouter);
-  app.use('/api', apiRateLimiter, searchLeadsRouter);
-  app.use('/api', apiRateLimiter, historyRouter);
-  app.use('/api', apiRateLimiter, gmailRouter);
-  app.use('/api', apiRateLimiter, outreachRouter);
+  // Rate limiter FIRST and exactly once. Attaching it per-router would make
+  // one request increment the counter at every mount it passes through on the
+  // way to its route (6 mounts = 6 counts per request).
+  app.use('/api', apiRateLimiter);
+
+  // API routes.
+  app.use('/api', parseQueryRouter);
+  app.use('/api', searchLeadsRouter);
+  app.use('/api', historyRouter);
+  app.use('/api', gmailRouter);
+  app.use('/api', outreachRouter);
+  app.use('/api', chatsRouter);
 
   // 404 + error handling (must be last).
   app.use(notFound);

@@ -248,6 +248,20 @@ await check('POST /api/outreach/send rejects an unsendable batch', async () => {
   assert.equal(body.error.code, 'nothing_sendable');
 });
 
+await check('chat routes validate ids and bodies', async () => {
+  const bad = await fetch(`${base}/api/chats/not-a-uuid`);
+  assert.equal(bad.status, 400);
+  assert.equal((await bad.json()).error.code, 'invalid_chat_id');
+
+  const noMessages = await fetch(`${base}/api/chats/11111111-2222-4333-8444-555555555555`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: 'x', messages: [] }),
+  });
+  assert.equal(noMessages.status, 400);
+  assert.equal((await noMessages.json()).error.code, 'invalid_messages');
+});
+
 server.close();
 
 if (failures > 0) {

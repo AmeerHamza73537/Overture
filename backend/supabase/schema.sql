@@ -41,6 +41,22 @@ create index if not exists search_history_created_at_idx
 create index if not exists search_history_user_id_idx
   on public.search_history (user_id);
 
+-- --- Chats ---------------------------------------------------------------------
+-- Full conversation history for the app. Each row is one chat; `messages` is
+-- the serialized message list (prompts, filter bubbles, lead results) so the
+-- app can reopen a chat exactly as it was and continue it.
+create table if not exists public.chats (
+  id          uuid primary key,
+  user_id     text,                                   -- null until app auth exists
+  title       text        not null default 'Untitled chat',
+  messages    jsonb       not null default '[]'::jsonb,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+create index if not exists chats_updated_at_idx
+  on public.chats (updated_at desc);
+
 -- --- Gmail connection --------------------------------------------------------
 -- One row per connected Gmail account. id='default' until app auth exists,
 -- after which id becomes the user id. The refresh token is stored ENCRYPTED
@@ -58,6 +74,7 @@ create table if not exists public.gmail_accounts (
 alter table public.query_cache    enable row level security;
 alter table public.search_history enable row level security;
 alter table public.gmail_accounts enable row level security;
+alter table public.chats          enable row level security;
 
 -- No policies added on purpose: only the service role key (server) can access.
 

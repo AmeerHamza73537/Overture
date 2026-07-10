@@ -69,12 +69,38 @@ export interface SearchLeadsResponse {
   cached: boolean;
 }
 
-export interface HistoryEntry {
-  id: string | number;
-  raw_query: string;
-  filters: LeadFilters;
-  result_count: number;
+// ---- Chat persistence --------------------------------------------------------
+
+/**
+ * One message in a conversation, exactly as the chat screen renders it.
+ * (The transient "typing…" indicator is UI-only and never persisted.)
+ */
+export type ChatMessage =
+  | { id: string; kind: 'user'; text: string }
+  | { id: string; kind: 'bot'; text: string }
+  | { id: string; kind: 'filters'; filters: LeadFilters }
+  | {
+      id: string;
+      kind: 'results';
+      query: string;
+      filters: LeadFilters;
+      leads: Lead[];
+      pagination: Pagination;
+      loadingMore: boolean;
+    }
+  | { id: string; kind: 'error'; text: string; retryQuery: string };
+
+/** List-row shape (no messages — kept light). */
+export interface ChatSummary {
+  id: string;
+  title: string;
   created_at: string;
+  updated_at: string;
+}
+
+/** Full stored chat as returned by GET /api/chats/:id. */
+export interface StoredChat extends ChatSummary {
+  messages: ChatMessage[];
 }
 
 // ---- Gmail + outreach -------------------------------------------------------
