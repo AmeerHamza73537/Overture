@@ -12,6 +12,7 @@ import type {
   LeadFilters,
   ParseQueryResponse,
   PersonLead,
+  SearchContext,
   SearchLeadsResponse,
   SendResponse,
   StoredChat,
@@ -78,10 +79,11 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = TIME
   return body as T;
 }
 
-export function parseQuery(query: string): Promise<ParseQueryResponse> {
+export function parseQuery(query: string, context?: SearchContext): Promise<ParseQueryResponse> {
   return request<ParseQueryResponse>('/api/parse-query', {
     method: 'POST',
-    body: JSON.stringify({ query }),
+    // `context` lets the parser tell a new search from a refinement or "more".
+    body: JSON.stringify({ query, ...(context ? { context } : {}) }),
   });
 }
 

@@ -55,11 +55,23 @@ export interface Pagination {
   total_matches: number;
 }
 
+/** How the parser classified a chat turn (see backend/src/services/groq.js). */
+export type SearchIntent = 'new_search' | 'refine' | 'more_results' | 'off_topic';
+
 export interface ParseQueryResponse {
+  intent: SearchIntent;
+  reply: string; // non-empty only when intent === 'off_topic'
   filters: LeadFilters;
   needs_clarification: boolean;
   assumptions: string[];
   cached: boolean;
+}
+
+/** The previous search's state, sent so the parser can refine / paginate. */
+export interface SearchContext {
+  filters: LeadFilters;
+  page: number;
+  total_pages: number;
 }
 
 export interface SearchLeadsResponse {
