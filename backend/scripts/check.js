@@ -189,6 +189,34 @@ await check('POST /api/parse-query rejects a missing query', async () => {
   assert.equal(body.error.code, 'invalid_query');
 });
 
+// Fast-path intents resolve WITHOUT calling Groq, so they're safe offline.
+await check('parse-query fast-path: "more" with no context -> off_topic', async () => {
+  const res = await fetch(`${base}/api/parse-query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: 'more' }),
+  });
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.intent, 'off_topic');
+  assert.ok(body.reply.length > 0);
+});
+
+await check('parse-query fast-path: "generate me more" with context -> more_results', async () => {
+  const context = { filters: { search_type: 'people', departments: ['marketing'], industries: ['fintech'] } };
+  const res = await fetch(`${base}/api/parse-query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: 'generate me more', context }),
+  });
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.intent, 'more_results');
+  // Filters are echoed from the (normalised) context, not re-parsed.
+  assert.deepEqual(body.filters.departments, ['marketing']);
+  assert.deepEqual(body.filters.industries, ['fintech']);
+});
+
 await check('POST /api/search-leads rejects missing filters', async () => {
   const res = await fetch(`${base}/api/search-leads`, {
     method: 'POST',

@@ -25,7 +25,7 @@ import { TypingDots } from '@/components/typing-dots';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import { ApiError, parseQuery, saveChat, searchLeads } from '@/lib/api';
 import { newChatId, takePendingChat } from '@/lib/chatStore';
-import type { ChatMessage, Lead } from '@/lib/types';
+import type { ChatMessage, Lead, LeadFilters } from '@/lib/types';
 
 const PER_PAGE = 10;
 
@@ -63,6 +63,13 @@ export default function ChatScreen() {
   // Last payload we successfully saved — skips redundant saves (and prevents
   // an immediate re-save right after restoring a chat).
   const lastSavedRef = useRef('');
+  // The most recent search's state (filters + how far paging has gone), so a
+  // "more" or "refine" turn can continue or adjust it instead of starting
+  // over. Updated on every results append / load-more, reset on new chat, and
+  // restored when a previous chat is reopened.
+  const searchContextRef = useRef<{ filters: LeadFilters; page: number; totalPages: number } | null>(
+    null,
+  );
 
   const append = (...items: UiMessage[]) =>
     setMessages((prev) => [...prev.filter((m) => m.kind !== 'typing'), ...items]);
@@ -77,16 +84,59 @@ export default function ChatScreen() {
       append({ id: uid(), kind: 'user', text: query }, { id: uid(), kind: 'typing' });
 
       try {
-        // 1. Natural language -> structured filters.
-        const parsed = await parseQuery(query);
-        append({ id: uid(), kind: 'filters', filters: parsed.filters }, { id: uid(), kind: 'typing' });
+        // 1. Classify the turn against the previous search.
+        const ctx = searchContextRef.current;
+        const parsed = await parseQuery(
+          query,
+          ctx ? { filters: ctx.filters, page: ctx.page, total_pages: ctx.totalPages } : undefined,
+        );
 
-        // 2. Filters -> leads.
+        // Not a lead-search request — just reply, no search.
+        if (parsed.intent === 'off_topic') {
+          append({ id: uid(), kind: 'bot', text: parsed.reply });
+          return;
+        }
+
+        // "More of the same" — continue the previous search on its next page.
+        if (parsed.intent === 'more_results' && ctx) {
+          if (ctx.page >= ctx.totalPages) {
+            append({
+              id: uid(),
+              kind: 'bot',
+              text: "That's everyone I could find for that search. Try a broader or brand-new search for more.",
+            });
+            return;
+          }
+          const next = await searchLeads(ctx.filters, { page: ctx.page + 1, perPage: PER_PAGE });
+          searchContextRef.current = {
+            filters: ctx.filters,
+            page: next.pagination.page,
+            totalPages: next.pagination.total_pages,
+          };
+          append({
+            id: uid(),
+            kind: 'results',
+            query,
+            filters: ctx.filters,
+            leads: next.leads,
+            pagination: next.pagination,
+            loadingMore: false,
+          });
+          return;
+        }
+
+        // new_search or refine — show the interpretation, then search page 1.
+        append({ id: uid(), kind: 'filters', filters: parsed.filters }, { id: uid(), kind: 'typing' });
         const result = await searchLeads(parsed.filters, {
           page: 1,
           perPage: PER_PAGE,
           rawQuery: query,
         });
+        searchContextRef.current = {
+          filters: parsed.filters,
+          page: result.pagination.page,
+          totalPages: result.pagination.total_pages,
+        };
         append({
           id: uid(),
           kind: 'results',
@@ -126,6 +176,13 @@ export default function ChatScreen() {
         page: target.pagination.page + 1,
         perPage: PER_PAGE,
       });
+      // Keep the "more"/"refine" context aligned with what the user is viewing,
+      // so a following typed "more" continues from here.
+      searchContextRef.current = {
+        filters: target.filters,
+        page: next.pagination.page,
+        totalPages: next.pagination.total_pages,
+      };
       setMessages((prev) =>
         prev.map((m) =>
           m.id === messageId && m.kind === 'results'
@@ -155,6 +212,17 @@ export default function ChatScreen() {
       chatIdRef.current = pending.id;
       lastSavedRef.current = JSON.stringify(restored); // already saved — don't re-save
       bumpUidPast(restored);
+      // Rebuild the search context from the last results so "more"/"refine"
+      // keep working in a reopened conversation.
+      const lastResults = [...restored].reverse().find((m) => m.kind === 'results');
+      searchContextRef.current =
+        lastResults && lastResults.kind === 'results'
+          ? {
+              filters: lastResults.filters,
+              page: lastResults.pagination.page,
+              totalPages: lastResults.pagination.total_pages,
+            }
+          : null;
       setMessages(restored);
       setActiveLead(null);
     }, []),
@@ -191,6 +259,7 @@ export default function ChatScreen() {
   const clearChat = () => {
     chatIdRef.current = null;
     lastSavedRef.current = '';
+    searchContextRef.current = null;
     setMessages([]);
     setActiveLead(null);
   };
