@@ -11,37 +11,40 @@ import { refreshAccessToken } from './googleAuth.js';
 const SEND_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send';
 
 // ---- Access-token cache ------------------------------------------------------
-// Access tokens live ~1 hour. We keep the current one in memory only (never
+// Access tokens live ~1 hour. We keep the current ones in memory only (never
 // persisted, never logged) and mint a new one from the encrypted refresh
-// token when it's missing or about to expire. Single-account setup -> a single
-// module-level slot; with per-user auth this becomes a Map keyed by user id.
-let cached = null; // { accessToken, expiresAt }
+// token when it's missing or about to expire. Keyed by app user id — every
+// user has their own connected account.
+const cached = new Map(); // userId -> { accessToken, expiresAt }
 const EXPIRY_MARGIN_MS = 60_000; // refresh 1 min early, never send with a dying token
 
 /**
- * Return a usable access token, refreshing it if needed.
+ * Return a usable access token for this user's account, refreshing if needed.
  * The refresh is completely invisible to the caller — it only ever sees a
  * valid token or a typed error (not connected / reconnect required).
  */
-export async function getValidAccessToken({ forceRefresh = false } = {}) {
-  if (!forceRefresh && cached && cached.expiresAt - EXPIRY_MARGIN_MS > Date.now()) {
-    return cached.accessToken;
+export async function getValidAccessToken(userId, { forceRefresh = false } = {}) {
+  const hit = cached.get(userId);
+  if (!forceRefresh && hit && hit.expiresAt - EXPIRY_MARGIN_MS > Date.now()) {
+    return hit.accessToken;
   }
 
-  const account = await getGmailAccount();
+  const account = await getGmailAccount(userId);
   if (!account) {
     throw new HttpError(400, 'gmail_not_connected', 'No Gmail account is connected yet.');
   }
 
   // Decrypt only here, use immediately, keep nothing decrypted around.
   const refreshToken = decryptToken(account.refresh_token_encrypted);
-  cached = await refreshAccessToken(refreshToken); // throws gmail_reconnect_required if revoked
-  return cached.accessToken;
+  const fresh = await refreshAccessToken(refreshToken); // throws gmail_reconnect_required if revoked
+  cached.set(userId, fresh);
+  return fresh.accessToken;
 }
 
 /** Called after connect/disconnect so a stale token is never reused. */
-export function resetTokenCache() {
-  cached = null;
+export function resetTokenCache(userId) {
+  if (userId === undefined) cached.clear();
+  else cached.delete(userId);
 }
 
 // ---- Message construction ------------------------------------------------------
@@ -93,8 +96,8 @@ export function isLikelyValidEmail(email) {
 // ---- Sending -----------------------------------------------------------------------
 
 /** Send one already-validated email. Retries once if the token just expired. */
-async function sendOne(email, { retried = false } = {}) {
-  const accessToken = await getValidAccessToken({ forceRefresh: retried });
+async function sendOne(userId, email, { retried = false } = {}) {
+  const accessToken = await getValidAccessToken(userId, { forceRefresh: retried });
 
   const res = await fetchWithTimeout(SEND_URL, {
     method: 'POST',
@@ -113,7 +116,7 @@ async function sendOne(email, { retried = false } = {}) {
   // 401 = the token died between our expiry check and Google's — mint a fresh
   // one and retry a single time. Any other failure is reported as-is.
   if (res.status === 401 && !retried) {
-    return sendOne(email, { retried: true });
+    return sendOne(userId, email, { retried: true });
   }
   const message = payload?.error?.message ?? `Gmail returned status ${res.status}`;
   if (res.status === 429 || res.status === 403) {
@@ -125,7 +128,8 @@ async function sendOne(email, { retried = false } = {}) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Send a batch of emails: [{ lead_id, to, subject, body }].
+ * Send a batch of emails from this user's connected account:
+ * [{ lead_id, to, subject, body }].
  * - Invalid addresses are skipped up front (never attempted).
  * - One failure does NOT stop the batch; each email gets its own result.
  * - A pause with jitter between sends (SEND_DELAY_MS ± 30%) keeps the account
@@ -135,7 +139,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  *
  * @returns {Promise<{ results: Array<{lead_id, to, status, message_id?, error?}>, needs_reconnect: boolean }>}
  */
-export async function sendBatch(emails) {
+export async function sendBatch(userId, emails) {
   const results = [];
   let needsReconnect = false;
 
@@ -157,7 +161,7 @@ export async function sendBatch(emails) {
     }
 
     try {
-      const messageId = await sendOne(email);
+      const messageId = await sendOne(userId, email);
       results.push({ ...base, status: 'sent', message_id: messageId });
     } catch (err) {
       results.push({ ...base, status: 'failed', error: err.message });

@@ -6,16 +6,24 @@
 // Run with: npm run check
 
 import assert from 'node:assert/strict';
-import { createApp } from '../src/app.js';
-import {
-  emptyFilters,
-  normaliseFilters,
-  toDiscoverBody,
-  toDomainSearchParams,
-} from '../src/utils/filterSchema.js';
-import { formatContact, formatCompany, rankContacts } from '../src/utils/formatLead.js';
-import { encryptToken, decryptToken } from '../src/utils/tokenCrypto.js';
-import { buildRawMessage, isLikelyValidEmail } from '../src/services/gmail.js';
+
+// Force Supabase OFF for this run (before any src import loads config/env.js):
+// the offline check exercises route validation without auth tokens, which is
+// exactly the no-Supabase dev mode. Auth-enabled behaviour (401s, sign-in)
+// needs a real Supabase project and is exercised live.
+process.env.SUPABASE_URL = '';
+process.env.SUPABASE_SECRET_KEY = '';
+process.env.SUPABASE_SERVICE_ROLE_KEY = '';
+
+// Dynamic imports so the env override above runs first (static imports would
+// hoist past it and env.js snapshots process.env at import time).
+const { createApp } = await import('../src/app.js');
+const { emptyFilters, normaliseFilters, toDiscoverBody, toDomainSearchParams } = await import(
+  '../src/utils/filterSchema.js'
+);
+const { formatContact, formatCompany, rankContacts } = await import('../src/utils/formatLead.js');
+const { encryptToken, decryptToken } = await import('../src/utils/tokenCrypto.js');
+const { buildRawMessage, isLikelyValidEmail } = await import('../src/services/gmail.js');
 
 let failures = 0;
 
@@ -226,6 +234,17 @@ await check('POST /api/search-leads rejects missing filters', async () => {
   const body = await res.json();
   assert.equal(res.status, 400);
   assert.equal(body.error.code, 'invalid_filters');
+});
+
+await check('auth endpoints report auth_not_configured without Supabase', async () => {
+  const res = await fetch(`${base}/api/auth/signin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'a@b.co', password: 'password123' }),
+  });
+  const body = await res.json();
+  assert.equal(res.status, 503);
+  assert.equal(body.error.code, 'auth_not_configured');
 });
 
 await check('unknown routes return the 404 envelope', async () => {

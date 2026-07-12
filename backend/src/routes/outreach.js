@@ -141,11 +141,11 @@ outreachRouter.post(
 
     // Fail fast with ONE clear error when Gmail was never connected, instead
     // of a batch where every row failed with the same message.
-    if (!(await getGmailAccount())) {
+    if (!(await getGmailAccount(req.user.id))) {
       throw new HttpError(400, 'gmail_not_connected', 'Connect a Gmail account before sending.');
     }
 
-    const { results, needs_reconnect } = await sendBatch(emails);
+    const { results, needs_reconnect } = await sendBatch(req.user.id, emails);
 
     res.json({
       results,

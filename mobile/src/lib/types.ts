@@ -154,3 +154,26 @@ export interface SendResponse {
   needs_reconnect: boolean;
   summary: { sent: number; failed: number; skipped: number };
 }
+
+// ---- Authentication ----------------------------------------------------------
+
+export interface AuthUser {
+  id: string;
+  email: string | null;
+  full_name: string | null;
+  created_at: string | null;
+}
+
+/** What the app persists between launches. expires_at is epoch SECONDS. */
+export interface AuthSession {
+  access_token: string;
+  refresh_token: string;
+  expires_at: number;
+  user: AuthUser;
+}
+
+/** Shape of /api/auth/signup, /signin and /refresh responses. */
+export interface AuthPayload {
+  user: AuthUser;
+  session: { access_token: string; refresh_token: string; expires_at: number };
+}

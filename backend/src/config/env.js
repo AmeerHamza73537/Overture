@@ -87,10 +87,26 @@ export const env = {
     secretKey: read('SUPABASE_SECRET_KEY', {
       fallback: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
     }),
+    // Public ("publishable"/"anon") key — used ONLY for the auth client that
+    // performs user-facing operations (sign in, refresh). Falls back to the
+    // secret key, which GoTrue also accepts, so it is optional.
+    publishableKey: read('SUPABASE_PUBLISHABLE_KEY', {
+      fallback: process.env.SUPABASE_ANON_KEY ?? '',
+    }),
     // Convenience flag: is Supabase configured at all?
     get enabled() {
       return Boolean(this.url && this.secretKey);
     },
+  },
+
+  auth: {
+    // Where the password-reset email link lands after Supabase verifies it.
+    // Must be allowlisted in Supabase (Auth -> URL Configuration -> Redirect
+    // URLs). The app can override it per-request (it knows its own deep-link
+    // URL, which differs between Expo Go and a standalone build).
+    resetRedirectUrl: read('AUTH_RESET_REDIRECT_URL', {
+      fallback: 'overture://reset-password',
+    }),
   },
 
   cacheTtlSeconds: toInt(read('CACHE_TTL_SECONDS', { fallback: '86400' }), 86400),

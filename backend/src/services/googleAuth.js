@@ -41,21 +41,31 @@ export function ensureGoogleConfigured() {
 // ---- CSRF state ------------------------------------------------------------
 // The `state` value ties the callback to a /connect we initiated: we send a
 // random string to Google, Google echoes it back, and we reject callbacks
-// whose state we never issued (blocks forged callback links). Kept in memory
-// with a short TTL — a consent screen is completed within minutes.
-const pendingStates = new Map(); // state -> expiry timestamp
+// whose state we never issued (blocks forged callback links). It also carries
+// WHO started the flow — the callback arrives from the browser without our
+// Authorization header, so the user id rides along inside the server-side
+// state entry. Kept in memory with a short TTL — a consent screen is
+// completed within minutes.
+const pendingStates = new Map(); // state -> { expiry, userId }
 const STATE_TTL_MS = 10 * 60 * 1000;
 
-export function issueState() {
+export function issueState(userId) {
   const state = randomBytes(16).toString('hex');
-  pendingStates.set(state, Date.now() + STATE_TTL_MS);
+  pendingStates.set(state, { expiry: Date.now() + STATE_TTL_MS, userId });
   return state;
 }
 
+/** @returns {string|null} the user id bound to the state, or null if invalid/expired. */
 export function consumeState(state) {
-  const expiry = pendingStates.get(state);
+  const entry = pendingStates.get(state);
   pendingStates.delete(state);
-  return Boolean(expiry && expiry > Date.now());
+  return entry && entry.expiry > Date.now() ? entry.userId : null;
+}
+
+/** Like consumeState but non-destructive — used by the browser entry page. */
+export function peekState(state) {
+  const entry = pendingStates.get(state);
+  return Boolean(entry && entry.expiry > Date.now());
 }
 
 // ---- Flow steps ------------------------------------------------------------

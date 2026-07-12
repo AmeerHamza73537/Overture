@@ -6,12 +6,14 @@ import cors from 'cors';
 
 import { env } from './config/env.js';
 import { cache } from './lib/cache.js';
-import { apiRateLimiter } from './middleware/rateLimiter.js';
+import { apiRateLimiter, authRateLimiter } from './middleware/rateLimiter.js';
+import { requireAuth } from './middleware/requireAuth.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
+import { authRouter } from './routes/auth.js';
 import { parseQueryRouter } from './routes/parseQuery.js';
 import { searchLeadsRouter } from './routes/searchLeads.js';
 import { historyRouter } from './routes/history.js';
-import { gmailRouter } from './routes/gmail.js';
+import { gmailRouter, gmailCallbackRouter } from './routes/gmail.js';
 import { outreachRouter } from './routes/outreach.js';
 import { chatsRouter } from './routes/chats.js';
 
@@ -33,6 +35,7 @@ export function createApp() {
       lead_provider: 'hunter',
       cache_backend: cache.backend,
       supabase_enabled: env.supabase.enabled,
+      auth_enabled: env.supabase.enabled,
     });
   });
 
@@ -41,7 +44,18 @@ export function createApp() {
   // way to its route (6 mounts = 6 counts per request).
   app.use('/api', apiRateLimiter);
 
-  // API routes.
+  // Auth endpoints: public by nature (they're how you GET a token) but behind
+  // a much stricter limiter since they accept credentials.
+  app.use('/api/auth', authRateLimiter, authRouter);
+
+  // Google's OAuth callback is opened by the BROWSER mid-consent — it cannot
+  // carry our Authorization header. Identity travels in the signed-out `state`
+  // value instead (bound to the user when the flow started), so mounting it
+  // before requireAuth is safe.
+  app.use('/api', gmailCallbackRouter);
+
+  // Everything below requires a signed-in user (req.user is set here).
+  app.use('/api', requireAuth);
   app.use('/api', parseQueryRouter);
   app.use('/api', searchLeadsRouter);
   app.use('/api', historyRouter);

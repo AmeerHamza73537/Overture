@@ -86,9 +86,15 @@ Fill in:
 
 ### 3. (Optional) Set up Supabase
 
-In the Supabase dashboard → **SQL editor**, run the contents of
-[`supabase/schema.sql`](supabase/schema.sql). This creates the `query_cache`
-and `search_history` tables with RLS enabled.
+In the Supabase dashboard → **SQL editor**, run these in order:
+
+1. [`supabase/schema.sql`](supabase/schema.sql) — cache, history, chats and
+   Gmail tables (RLS enabled).
+2. [`supabase/add-auth.sql`](supabase/add-auth.sql) — the `profiles` table +
+   trigger for app authentication (see the "Authentication" section below).
+
+Supabase also unlocks **sign in / sign up** — without it the API runs open as
+a single shared user (fine for local dev only).
 
 ### 4. Run
 
@@ -115,6 +121,68 @@ Check health: `GET http://localhost:3000/health`
 npm run check   # offline: boots the app, tests routes + helpers. Free.
 npm run smoke   # live: real Groq parse + real Hunter search. Spends credits.
 ```
+
+---
+
+## Authentication (sign up / sign in / password reset)
+
+Auth is backed by **Supabase Auth** and proxied through this backend — the
+app never talks to Supabase directly. Users (email + hashed password) live in
+Supabase's `auth.users` table, with an app-facing `public.profiles` row kept
+in sync by a trigger (`supabase/add-auth.sql`). Every API route except
+`/api/auth/*` and `/api/gmail/callback` requires a
+`Authorization: Bearer <access_token>` header once Supabase is configured,
+and chats, search history and the Gmail connection are all scoped to the
+signed-in user.
+
+Setup (one time, ~2 minutes):
+
+1. Run [`supabase/add-auth.sql`](supabase/add-auth.sql) in the SQL editor.
+2. In the Supabase dashboard → **Authentication → URL Configuration →
+   Redirect URLs**, add the deep links the password-reset email may land on:
+   - `overture://reset-password` (standalone app builds)
+   - `exp://*/--/reset-password` (Expo Go during development)
+3. (Optional) Customise the reset email under **Authentication → Emails**.
+   Supabase's built-in mailer works out of the box but is rate-limited
+   (a few emails per hour) — plug in your own SMTP for production.
+
+How the **forgot password** flow works end to end:
+
+1. App calls `POST /api/auth/forgot-password { email, redirect_to }` —
+   `redirect_to` is the app's own deep link (it differs between Expo Go and a
+   standalone build; the backend falls back to `AUTH_RESET_REDIRECT_URL`).
+2. Supabase emails the user a verification link.
+3. The user taps it; Supabase verifies the token and redirects the browser to
+   the deep link, which opens the app's **reset password** screen with the
+   recovery session's tokens in the URL fragment.
+4. The app collects a new password and calls
+   `POST /api/auth/reset-password { access_token, password }`; the backend
+   verifies the recovery token, updates the password via the admin API and
+   revokes all existing sessions.
+
+Note: sign-up creates the account pre-confirmed (no "verify your email" step)
+so the flow works with zero dashboard configuration; mailbox ownership is
+still proven by the password-reset flow. To require verified signups, switch
+`routes/auth.js` from `auth.admin.createUser` to `auth.signUp` and enable
+"Confirm email" in the dashboard.
+
+### Auth endpoints
+
+| Route | Body | Returns |
+| ----- | ---- | ------- |
+| `POST /api/auth/signup` | `{ email, password, full_name? }` | `{ user, session }` (201) |
+| `POST /api/auth/signin` | `{ email, password }` | `{ user, session }` |
+| `POST /api/auth/refresh` | `{ refresh_token }` | `{ user, session }` |
+| `POST /api/auth/signout` | — (Bearer) | `{ signed_out }` |
+| `GET /api/auth/me` | — (Bearer) | `{ user }` |
+| `POST /api/auth/forgot-password` | `{ email, redirect_to? }` | `{ sent }` (always — no account enumeration) |
+| `POST /api/auth/reset-password` | `{ access_token, password }` | `{ reset }` |
+
+`session` is `{ access_token, refresh_token, expires_at }` (`expires_at` in
+epoch **seconds**). Auth routes sit behind a stricter rate limit (20 requests
+/ 15 min / IP). Auth error codes: `auth_required`, `invalid_token`,
+`invalid_credentials`, `email_in_use`, `weak_password`, `refresh_failed`,
+`reset_rate_limited`, `auth_not_configured`.
 
 ---
 
@@ -267,8 +335,9 @@ Supabase isn't configured. Used by the saved-searches screen later.
 | Route | What it does |
 | ----- | ------------ |
 | `GET /api/gmail/status` | `{ configured, connected, email }` |
-| `GET /api/gmail/connect` | Browser page: redirects to Google consent |
-| `GET /api/gmail/callback` | Google redirects here; stores encrypted tokens |
+| `GET /api/gmail/connect-url` | `{ url, state }` — Google consent URL bound to the signed-in user |
+| `GET /api/gmail/connect?state=` | Browser page: redirects to Google consent (state from `/connect-url`) |
+| `GET /api/gmail/callback` | Google redirects here; stores encrypted tokens (public — identity travels in `state`) |
 | `DELETE /api/gmail/account` | Revokes the grant and forgets the connection |
 | `POST /api/outreach/generate` | `{ leads, campaign }` → AI drafts per lead |
 | `POST /api/outreach/revise` | `{ lead, campaign, subject, body, instruction }` → revised draft |
