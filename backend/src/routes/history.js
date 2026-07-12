@@ -12,7 +12,7 @@ historyRouter.get(
   '/searches',
   asyncHandler(async (req, res) => {
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 50, 1), 200);
-    const searches = await listSearches({ limit });
+    const searches = await listSearches({ userId: req.user.id, limit });
     res.json({ searches });
   }),
 );

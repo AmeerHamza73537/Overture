@@ -31,14 +31,14 @@ chatsRouter.get(
   '/chats',
   asyncHandler(async (req, res) => {
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 50, 1), 200);
-    res.json({ chats: await listChats(limit) });
+    res.json({ chats: await listChats(req.user.id, limit) });
   }),
 );
 
 chatsRouter.get(
   '/chats/:id',
   asyncHandler(async (req, res) => {
-    const chat = await getChat(readId(req));
+    const chat = await getChat(req.user.id, readId(req));
     if (!chat) throw new HttpError(404, 'chat_not_found', 'No chat with that id.');
     res.json(chat);
   }),
@@ -62,7 +62,7 @@ chatsRouter.put(
       throw new HttpError(400, 'invalid_messages', 'Every message needs a string "kind".');
     }
 
-    await upsertChat({
+    await upsertChat(req.user.id, {
       id,
       title: typeof title === 'string' && title.trim() ? title.trim().slice(0, 120) : 'Untitled chat',
       messages,
@@ -74,7 +74,7 @@ chatsRouter.put(
 chatsRouter.delete(
   '/chats/:id',
   asyncHandler(async (req, res) => {
-    await deleteChat(readId(req));
+    await deleteChat(req.user.id, readId(req));
     res.json({ deleted: true });
   }),
 );

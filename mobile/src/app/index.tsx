@@ -23,8 +23,10 @@ import { LeadActionsSheet } from '@/components/lead-actions-sheet';
 import { ResultsBubble } from '@/components/results-bubble';
 import { TypingDots } from '@/components/typing-dots';
 import { Colors, Radius, Spacing } from '@/constants/theme';
-import { ApiError, parseQuery, saveChat, searchLeads } from '@/lib/api';
+import { ApiError, parseQuery, saveChat, searchLeads, signOut } from '@/lib/api';
+import { getSession } from '@/lib/authStore';
 import { newChatId, takePendingChat } from '@/lib/chatStore';
+import { confirm } from '@/lib/dialogs';
 import type { ChatMessage, Lead, LeadFilters } from '@/lib/types';
 
 const PER_PAGE = 10;
@@ -329,6 +331,18 @@ export default function ChatScreen() {
                 accessibilityLabel="Gmail account"
               >
                 <Ionicons name="mail-outline" size={22} color={Colors.primary} />
+              </Pressable>
+              <Pressable
+                onPress={async () => {
+                  const email = getSession()?.user.email;
+                  if (await confirm('Sign out', email ? `Signed in as ${email}.` : 'Sign out of Overture?', 'Sign out')) {
+                    await signOut(); // clears the session -> root guard shows sign-in
+                  }
+                }}
+                hitSlop={8}
+                accessibilityLabel="Sign out"
+              >
+                <Ionicons name="log-out-outline" size={22} color={Colors.primary} />
               </Pressable>
             </View>
           ),

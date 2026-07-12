@@ -1,9 +1,14 @@
 // Thin typed client for the Outreach backend. Every call goes through
-// `request` so timeouts and the backend's { error: { code, message } }
-// envelope are handled in one place.
+// `request` so timeouts, authentication (Bearer token + invisible refresh)
+// and the backend's { error: { code, message } } envelope are handled in one
+// place.
 
+import { getSession, setSession } from './authStore';
 import { getApiBase } from './config';
 import type {
+  AuthPayload,
+  AuthSession,
+  AuthUser,
   Campaign,
   ChatMessage,
   ChatSummary,
@@ -34,7 +39,25 @@ export class ApiError extends Error {
 // backend more headroom than a typical request would need.
 const TIMEOUT_MS = 60_000;
 
-async function request<T>(path: string, init: RequestInit = {}, timeoutMs = TIMEOUT_MS): Promise<T> {
+// How close to expiry (seconds) a token gets refreshed BEFORE a request, so
+// calls never leave with a token that dies in flight.
+const REFRESH_MARGIN_S = 60;
+
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs = TIMEOUT_MS,
+  { isRetry = false } = {},
+): Promise<T> {
+  // Refresh proactively when the access token is about to expire. Auth
+  // endpoints themselves skip this (they're how tokens are obtained).
+  const authed = !path.startsWith('/api/auth/');
+  let session = getSession();
+  if (authed && session && session.expires_at - REFRESH_MARGIN_S < Date.now() / 1000) {
+    await refreshSession();
+    session = getSession();
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -43,7 +66,11 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = TIME
     res = await fetch(`${getApiBase()}${path}`, {
       ...init,
       signal: controller.signal,
-      headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(authed && session ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        ...(init.headers ?? {}),
+      },
     });
   } catch (err: unknown) {
     if (err instanceof Error && err.name === 'AbortError') {
@@ -67,6 +94,17 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = TIME
 
   if (!res.ok) {
     const error = (body as { error?: { code?: string; message?: string } } | null)?.error;
+
+    // Expired/revoked token: refresh once and replay the request. If the
+    // refresh fails the session is cleared, which routes the app to sign-in.
+    if (res.status === 401 && authed && session && !isRetry) {
+      if (await refreshSession()) {
+        return request<T>(path, init, timeoutMs, { isRetry: true });
+      }
+      setSession(null);
+      throw new ApiError(401, 'session_expired', 'Your session has expired. Please sign in again.');
+    }
+
     throw new ApiError(
       res.status,
       error?.code ?? 'http_error',
@@ -77,6 +115,93 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = TIME
     throw new ApiError(res.status, 'bad_response', 'Server returned an unreadable response.');
   }
   return body as T;
+}
+
+// ---- Authentication ----------------------------------------------------------
+
+function toSession(payload: AuthPayload): AuthSession {
+  return { ...payload.session, user: payload.user };
+}
+
+/** Sign up, store the returned session, and return the user. */
+export async function signUp(email: string, password: string, fullName?: string): Promise<AuthUser> {
+  const payload = await request<AuthPayload>('/api/auth/signup', {
+    method: 'POST',
+    body: JSON.stringify({ email, password, ...(fullName ? { full_name: fullName } : {}) }),
+  });
+  setSession(toSession(payload));
+  return payload.user;
+}
+
+/** Sign in, store the returned session, and return the user. */
+export async function signIn(email: string, password: string): Promise<AuthUser> {
+  const payload = await request<AuthPayload>('/api/auth/signin', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+  setSession(toSession(payload));
+  return payload.user;
+}
+
+/** Revoke the session server-side (best-effort) and clear it locally. */
+export async function signOut(): Promise<void> {
+  const session = getSession();
+  setSession(null); // sign out locally first — never leave the user stuck
+  if (!session) return;
+  try {
+    await request('/api/auth/signout', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    });
+  } catch {
+    // Server-side revocation is best-effort; the local session is already gone.
+  }
+}
+
+/** Ask the backend to email a password-reset link that deep-links back here. */
+export function forgotPassword(email: string, redirectTo: string): Promise<{ sent: boolean }> {
+  return request('/api/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email, redirect_to: redirectTo }),
+  });
+}
+
+/** Set a new password using the access token from the reset-email deep link. */
+export function resetPassword(accessToken: string, password: string): Promise<{ reset: boolean }> {
+  return request('/api/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ access_token: accessToken, password }),
+  });
+}
+
+// Single-flight token refresh: concurrent 401s share one refresh call.
+let refreshInFlight: Promise<boolean> | null = null;
+
+function refreshSession(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = doRefresh().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+async function doRefresh(): Promise<boolean> {
+  const session = getSession();
+  if (!session?.refresh_token) return false;
+  try {
+    const payload = await request<AuthPayload>('/api/auth/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ refresh_token: session.refresh_token }),
+    });
+    setSession(toSession(payload));
+    return true;
+  } catch (err) {
+    // A definitive rejection (revoked/expired refresh token) ends the session;
+    // a network blip does not — the original request just fails normally.
+    if (err instanceof ApiError && err.status === 401) setSession(null);
+    return false;
+  }
 }
 
 export function parseQuery(query: string, context?: SearchContext): Promise<ParseQueryResponse> {
@@ -132,9 +257,13 @@ export function gmailStatus(): Promise<GmailStatus> {
   return request<GmailStatus>('/api/gmail/status');
 }
 
-/** Browser URL that starts the Google consent flow (opened via Linking). */
-export function gmailConnectUrl(): string {
-  return `${getApiBase()}/api/gmail/connect`;
+/**
+ * Google consent URL bound to the signed-in user (opened via Linking).
+ * `state` also works at GET /api/gmail/connect?state=... — a short browser
+ * URL for the dev "finish on the PC" flow.
+ */
+export function gmailConnectUrl(): Promise<{ url: string; state: string }> {
+  return request<{ url: string; state: string }>('/api/gmail/connect-url');
 }
 
 export function disconnectGmail(): Promise<{ disconnected: boolean }> {

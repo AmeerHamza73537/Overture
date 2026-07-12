@@ -50,6 +50,7 @@ searchLeadsRouter.post(
     // --- Record history (best-effort, non-blocking on the response). ---
     if (typeof rawQuery === 'string' && rawQuery.trim()) {
       recordSearch({
+        userId: req.user.id,
         rawQuery: rawQuery.trim(),
         filters,
         resultCount: result.leads.length,
